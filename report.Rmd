@@ -1,0 +1,492 @@
+---
+date: "`r Sys.Date()`"
+author: "Miguel Tavares, Hélder Vieira, Alberto Rocha"
+title: "Relatório sobre o Projecto de Introdução a Ciência de Dados 2020/2021"
+output: 
+  officedown::rdocx_document:
+    reference_docx: C://officedown.docx
+    mapstyles:
+      Normal: ['First Paragraph']
+---
+
+```{r setup, include=FALSE, echo = F}
+knitr::opts_chunk$set(echo = TRUE, fig.cap = TRUE)
+library(officedown)
+library(officer)
+
+fp <- fp_par(
+  text.align = "center", 
+  padding.bottom = 20, padding.top = 120, 
+  border.bottom = fp_border())
+
+ft <- fp_text(shading.color='#EFEFEF', bold = TRUE)
+```
+
+```{r, echo = F, include = F}
+
+Sys.setenv(CUDA_VISIBLE_DEVICES = "-1")
+    disabled <- c("disabled", "GPU")
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(kernlab)
+library(pROC)
+library(tensorflow)
+library(keras)
+```
+
+
+# Introduction
+
+Our goal with this work is to assess the performance of several different machine learning techniques in predicting the occurrence of cardiac pathology in pacients, given the predictors available in the 'UCMF' dataset that was provided. This dataset consists of clinical records of children between 0 and 19, collected in the Real Hospital Português, in Brazil.
+
+# Available data
+
+Below follows a description of the variables provided in the dataset as well as the processing that was performed on them. It should be noted that they are presented sequentially in the order which they were treated, so stats such as the ammount of missing values in a given variable already take into account previously excluded observations that would otherwise inflate that number.
+
+## **PATOLOGIA**
+
+This is our target variable whose occurrence we intend to model. It has two levels: 'Normal' and 'Anormal' (abnormal), although they are presented with different spellings. Spelling variations were aggregated into the 2 fundamental levels. We rejected observations with missing values on this variable, accounting for 1168 observations.
+
+## **IDADE**
+
+This variable represents age of the subjects. Observations outside of the ]0,20] range were rejected as they were either obvious input mistakes, such as negative ages, or ages outside of the intended range of this study (children and teenagers).
+
+## **SEXO**
+
+This variable encodes the gender of the patient. After uniformization of the levels, we have considered 3 levels: Male, Female and Indetermined. Indetermined cases were a minority (398) so those observations were excluded.
+
+## **Peso**, **Altura** and **IMC**
+
+These variables correspond to weight, height and body-mass index. These variables are expected to be important in assessing the likelihood of pathology occurrence, since they are directly linked to physical constitution. Missing values were inputated by performing polynomial regression on existing data. **IMC** for the inputated observations were calculated. A table \@ref from the World Health Organization (WHO) was then used as a reference for BMI distributions per age. Observations with a BMI below 0.8 * [3 *percentile*] or above 1.2 * [97 *percentile*] on their age class were excluded as outliers. 648 observations were thus excluded.
+
+## **SOPRO**
+
+This variable refers to the existence and type of heart murmur. For the purposes of this work, it was encoded to a binary factor corresponding to presence or absence of a murmur on the patient.
+
+## **B2**
+
+## SEXO
+
+## Rejected variables
+
+The variables **ID**, **Convenio**, **Atendimento**, **DN** were not used in this work and therefore will not be analized here.
+
+* **PPA** is attributed according to the 
+
+* **PULSOS** had 99.3% observations recorded as 'Normal'. Therefore we do not expect to carry it any significative correlation with our target variable or predictive power in the models. 
+
+```{r, echo = F, include = F}
+df_core <- readxl::read_xls("UCMF.xls")
+
+# corrigimos nome das variaveis
+names(df_core) <- c("ID","Peso","Altura",
+                    "IMC","Atendimento","DN",
+                    "IDADE","Convenio","PULSOS",
+                    "PA_SISTOLICA","PA_DIASTOLICA","PPA",
+                    "PATOLOGIA","B2","SOPRO",
+                    "FC","HDA1","HDA2",
+                    "SEXO","MOTIVO1","MOTIVO2")
+
+# rejeitamos observaçoes sem variavel resposta
+df <- df_core %>% filter(!is.na(PATOLOGIA))
+
+## corrigimos os niveis da variavel
+df$PATOLOGIA <- factor(df$PATOLOGIA)
+levels(df$PATOLOGIA) <- c("Anormal","Anormal","Normal","Normal")
+
+# IDADES
+df <- df[df$IDADE > 0 & df$IDADE <= 20 & !is.na(df$IDADE),]
+df$IDADE_class <- trunc(df$IDADE)
+
+# SEXO
+df$SEXO <- factor(df$SEXO)
+levels(df$SEXO) <- c("F","F","I","M","M","M")
+
+# Decisão: rejeitar sexo I
+df <- df[df$SEXO != "I",]
+
+
+
+df$HDA1[is.na(df$HDA1)] <- "Sem Historico"
+df$HDA1 <- factor(df$HDA1) 
+levels(df$HDA1)
+
+df$HDA2[is.na(df$HDA2)] <- "Sem Historico"
+df$HDA2 <- factor(df$HDA2)
+levels(df$HDA2)
+
+df$SOPRO <- factor(df$SOPRO)
+levels(df$SOPRO) <- c("ausente", "presente", "presente",
+                      "presente","presente","presente",
+                      "presente")
+```
+
+```{r temp, include = F, echo = F}
+df_temp <- df %>% drop_na %>%
+  filter(PA_SISTOLICA<500) %>%
+  select(PATOLOGIA,Peso,Altura,IMC,IDADE,
+         PULSOS,PA_SISTOLICA,PA_DIASTOLICA,
+         PPA,SOPRO,FC,
+         HDA1,HDA2, B2,
+         MOTIVO1,MOTIVO2)
+
+df_num <- df_temp %>% select(PATOLOGIA, Peso, Altura, IDADE, PA_SISTOLICA, PA_DIASTOLICA, FC)
+```
+
+# Exploratory Data Analysis
+
+## Data - dados limpos em python
+
+```{r}
+df_temp <- read.csv("df_final.csv", dec = ".")
+
+names(df_temp) <- c("ID","Peso","Altura",
+                    "IMC","IDADE",
+                    "PA_SISTOLICA","PA_DIASTOLICA",
+                    "PATOLOGIA","B2","SOPRO",
+                    "FC","HDA1","HDA2",
+                    "SEXO","MOTIVO")
+df_temp <-
+df_temp  %>%  select(PATOLOGIA,Peso,Altura,IMC,IDADE,
+                       PA_SISTOLICA,PA_DIASTOLICA,
+                       FC, HDA1, HDA2, B2, SOPRO,
+                       MOTIVO) %>% drop_na %>%
+  mutate(PATOLOGIA = relevel(factor(PATOLOGIA),ref = "Normal"),
+         HDA1 = factor(HDA1),
+         HDA2 = factor(HDA2),
+         B2 = factor(B2),
+         SOPRO = factor(SOPRO),
+         MOTIVO = factor(MOTIVO))
+
+# SOPRO
+df_num <- df_temp %>% select(PATOLOGIA, Peso, Altura, IDADE, PA_SISTOLICA, PA_DIASTOLICA, FC)
+# B2
+```
+
+```{r}
+index <- caret::createDataPartition(df_temp$PATOLOGIA, p = 0.8, list = F)
+```
+
+# Tested Models
+
+```{r}
+modelo <- as.formula(
+          PATOLOGIA ~ Peso + Altura + IDADE +
+          PA_SISTOLICA + PA_DIASTOLICA +
+          SOPRO + FC + HDA1 + HDA2 + B2 +
+          MOTIVO)
+
+modelo_num <- as.formula(PATOLOGIA ~ Peso + Altura + 
+                           IDADE + PA_SISTOLICA + PA_DIASTOLICA + FC)
+```
+
+## Logistic Regression
+
+```{r}
+model_rl <- glm(modelo, family = binomial(link='logit'),
+                data = df_temp[index,])
+
+confusionMatrix(factor(
+  ifelse(
+    predict(model_rl, type = 'response') > 0.5, "Anormal", "Normal")),
+                df_temp[index,]$PATOLOGIA)
+
+roc_rl <- roc(response = ifelse(df_temp[index,]$PATOLOGIA == "Normal", 0, 1),
+              predictor = predict(model_rl, type = 'response'))
+
+plot.roc(roc_rl,
+         legacy.axes=T,
+         print.auc=T,
+         percent=T,
+         col="#4daf4a")
+
+ggplot(df_temp[index,]) + 
+  geom_point(aes(x = Peso,
+                 y = Altura,
+                 col = df_temp[index,]$PATOLOGIA ==
+                   ifelse(fitted(model_rl) > 0.7 ,"Anormal","Normal"))) + 
+  theme(legend.position = 'bottom')
+
+
+ggplot(df_temp[-index,]) + 
+  geom_point(aes(x = Peso,
+                 y = Altura,
+                 col = df_temp[-index,]$PATOLOGIA ==
+                   ifelse(predict(model_rl,
+                                  newdata = df_temp[-index,]) > 0.5,"Anormal","Normal"))) + 
+  theme(legend.position = 'bottom')
+
+
+```
+
+## Support Vector Machines - Linear kernel
+
+várias opções: 'svmLinear', 'svmLinear2', 'svmLinear3'
+
+```{r}
+# grelha_svm <- expand.grid(tau = c(0.01))
+
+control <- caret::trainControl(method = "cv", number = 10)
+
+svm_l <- caret::train(modelo_num,
+                     method = 'svmPoly',
+                     data=df_num[index,],
+                     trControl=control,
+                     # tuneGrid=grelha_svm,
+                     # preProc = c("center","scale"),
+                     metric="Accuracy")
+
+svm_l
+confusionMatrix(svm_l)
+
+```
+
+
+## Linear Discriminant Analysis
+
+Elevada colinearidade das variaveis categoricas?
+
+```{r}
+model_lda <- MASS::lda(modelo, data = df_temp[index,])
+
+MASS::ldahist(predict(model_lda, data = df_temp[index,])$x[,1],
+                      g = predict(model_lda, data = df_temp[index,])$class)
+
+lda_probs <- predict(model_lda, 
+                     newdata = df_temp[index,], 
+                     type = "response")
+
+# model performance, quick glance
+mean(ifelse(predict(model_lda, 
+                     newdata = df_temp[index,])$x[,1] > 
+                     model_lda$prior[1] , 1, 0) == 
+     ifelse(df_temp[index,]$PATOLOGIA == "Normal",0,1))
+
+# mean(ifelse(predict(model_lda, 
+     #                 newdata = df_temp[-index,])$x[,1] > 
+     #                 model_lda$prior[1] , 1, 0) == 
+     # ifelse(df_temp[-index,]$PATOLOGIA == "Normal",0,1))
+
+# confusion matrix
+confusionMatrix(
+                predict(model_lda)$class,
+                df_temp[index,]$PATOLOGIA)
+
+confusionMatrix(
+                predict(model_lda, newdata = df_temp[-index,])$class,
+                df_temp[-index,]$PATOLOGIA)
+
+# Plot da decision boundary
+ggplot() + 
+  # geom_point(aes(x = nd$x, y = nd$y)) + 
+  geom_point(data = df_temp[index,],
+             aes(x = PA_DIASTOLICA, 
+                 y = PA_SISTOLICA,
+                 col = PATOLOGIA==predict(model_lda)$class)) + 
+  theme_light() + 
+  labs(col = "correct?")
+```
+
+## Naive Bayes
+
+```{r}
+model_bayes <-
+e1071::naiveBayes(modelo,
+                  data = df_temp[index,])
+
+# confusion matrix of the training data
+confusionMatrix(df_num[index,]$PATOLOGIA,
+predict(model_bayes, newdata = df_num[index,]))
+
+# confusion matrix of the holdout data
+confusionMatrix(df_num[-index,]$PATOLOGIA,
+predict(model_bayes, newdata = df_num[-index,]))
+
+ggplot() + 
+  # geom_point(aes(x = nd$x, y = nd$y)) + 
+  geom_point(data = df_temp[index,],
+             aes(x = Peso, 
+                 y = Altura,
+                 col = PATOLOGIA==predict(model_bayes,
+                                          newdata = df_temp[index,]))) + 
+  theme_light() + 
+  labs(col = "correct?", title = "Naive Bayes")
+```
+
+
+## Random Forest
+
+Testar tambem com preditores categoricos
+
+```{r}
+grelha <- expand.grid(mtry = c(1,2,3,4,5,6))
+
+control <- caret::trainControl(method = "cv", number = 10)
+
+forest <- caret::train(modelo,
+                     method="rf",
+                     data=df_temp[index,],
+                     trControl=control,
+                     tuneGrid=grelha,
+                     preProc = c("center","scale"),
+                     ntree=500,
+                     metric="Accuracy")
+
+summary(forest)
+print(forest)
+
+# confusion matrix of the training data
+caret::confusionMatrix(forest)
+
+# confusion matrix of the holdout data
+confusionMatrix(df_num[-index,]$PATOLOGIA,
+predict(forest, newdata = df_num[-index,]))
+
+var_rank<-data.frame(variables=rownames(forest$finalModel$importance),importance=forest$finalModel$importance)
+
+var_rank[order(var_rank$IncNodePurity,decreasing=T),][1:20,] %>% View
+
+```
+
+
+## Recurring Neural Network
+
+
+```{r}
+
+# 1 - separar bem as aguas
+x <- df_temp[,-1]
+y <- df_temp$PATOLOGIA
+
+# 2 - passar as variaveis categorias a one hot-encoding
+num <-
+x[index,] %>% select_if(~!is.numeric(.x)) %>%
+      caret::dummyVars("~.", data = .) %>%
+      predict(object = .,
+              newdata = x[index,] %>% select_if(~!is.numeric(.x)))
+
+cat <-
+# 3 - normalizar as variaveis numericas, separando teste de validação para não contaminar
+x[index,] %>% select_if(is.numeric) %>%
+              preProcess(method = "range") %>%
+              predict(object = .,
+                      newdata = x[index,] %>% select_if(is.numeric))
+
+num_val <-
+x[-index,] %>% select_if(~!is.numeric(.x)) %>%
+      caret::dummyVars("~.", data = .) %>%
+      predict(object = .,
+              newdata = x[-index,] %>% select_if(~!is.numeric(.x)))
+
+cat_val <-
+# 3 - normalizar as variaveis numericas
+x[-index,] %>% select_if(is.numeric) %>%
+              preProcess(method = "range") %>%
+              predict(object = .,
+                      newdata = x[-index,] %>% select_if(is.numeric))
+
+x_norm <-cbind(num,cat) %>% as.matrix
+x_val <- cbind(num_val, cat_val) %>% as.matrix
+
+# 4 - binarizar (palavra linda) a variavel resposta
+y_norm <- ifelse(y == "Normal",1,0) 
+# %>% as.numeric() %>% as.matrix
+
+# 5 - preparar a rede
+model_nn <- keras_model_sequential()
+
+model_nn %>%
+  layer_dense(input_shape = dim(x_norm)[2],units=20,name="H1",use_bias=T, activation = 'relu') %>%
+  layer_dense(units = 20, use_bias =  T, activation = 'relu') %>%
+  layer_dense(units = 1,name="Output") 
+
+# loss, optimizer, metrics
+model_nn %>% keras::compile(loss = 'binary_crossentropy', 
+                            optimizer = optimizer_rmsprop(lr = 0.0001),
+                            metrics = c('accuracy'))
+
+# 6 Treinar
+history <- model_nn %>% fit(
+  x_norm, y_norm[index], 
+  epochs = 30, batch_size = 128, 
+  validation_data = list(x_val,y_norm[-index]))
+
+
+# # 7 Olhar
+# plot(history)
+# 
+# 
+# sum((model %>% predict(inp)))/sum(y_nn)
+# 
+# # tensorboard(action = "stop")
+# 
+# plot(history) + theme_light()
+# 
+# data.frame(p.GUU=y_nn,
+#            p.GUU_hat=(model %>% predict(inp)),
+#            grupo=train[,"EESPECIE"]) %>%
+#   # filter(lota %in% c("SINES","OLHAO","VRSA")) %>%
+#   ggplot+
+#   geom_point(aes(x=p.GUU,y=p.GUU_hat,color=EESPECIE))+
+#   geom_abline(slope=1,intercept=0) +
+#   labs(x = "Quantidade real de GUU (kg)", y = "quantidade prevista de GUU (kg)", col = "") + 
+#   theme_light()
+# 
+```
+
+## ROC plots
+
+```{r ROC plots}
+
+# roc.glm<-roc(train$HOF,predict(train.log),plot=T,legacy.axes=T,print.auc=T)
+# data.frame(tpp=roc.glm$sensitivities*100.,
+#            fpp=(1-roc.glm$specificities)*100,
+#            thresholds=roc.glm$thresholds) %>% head
+par(pty="s")
+
+#logistic regression
+plot.roc(df_temp$PATOLOGIA,predict(train.log,type="response"),
+         legacy.axes=T,
+         print.auc=T,
+         percent=T,
+         col="#4daf4a",
+         print.auc.y=60)
+#logistic regression with undersampling
+plot.roc(train.us$HOF,predict(train.us.log,type="response"),
+         legacy.axes=T,
+         print.auc=T,
+         percent=T,
+         col="lightblue",
+         print.auc.y=50,
+         add=T)
+#random forests
+plot.roc(train$HOF,train.rf$votes[,1],
+         legacy.axes=T,
+         print.auc=T,
+         percent=T,
+         col="red",
+         print.auc.y=40,
+         add=T)
+#random forests
+plot.roc(train.us$HOF,train.us.rf$votes[,1],
+         legacy.axes=T,
+         print.auc=T,
+         percent=T,
+         col="orange",
+         print.auc.y=30,
+         add=T)
+#lda
+# plot.roc(train$HOF,predict(train.lda)$x[,1],
+#          legacy.axes=T,
+#          print.auc=T,
+#          percent=T,
+#          col="purple",
+#          print.auc.y=20,
+#          add=T)
+
+legend("bottomright",legend=c("logistic regression","log. unders.","random forests","rad.for under"),
+       col=c("#4daf4a","lightblue","red","orange"),lwd=4,cex=0.6)
+
+```
