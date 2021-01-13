@@ -3,12 +3,14 @@ model_bayes <-
                     data = df_temp[index,])
 
 # confusion matrix of the training data
-confusionMatrix(df_num[index,]$PATOLOGIA,
-                predict(model_bayes, newdata = df_num[index,]))
+ct_nb_train <-
+confusionMatrix(df_temp[index,]$PATOLOGIA,
+                predict(model_bayes, newdata = df_temp[index,]))
 
 # confusion matrix of the holdout data
-confusionMatrix(df_num[-index,]$PATOLOGIA,
-                predict(model_bayes, newdata = df_num[-index,]))
+ct_nb_test <-
+confusionMatrix(df_temp[-index,]$PATOLOGIA,
+                predict(model_bayes, newdata = df_temp[-index,]))
 
 ggplot() + 
   # geom_point(aes(x = nd$x, y = nd$y)) + 
