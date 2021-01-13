@@ -1,0 +1,330 @@
+---
+date: "`r Sys.Date()`"
+author: "Miguel Tavares, Hélder Vieira, Alberto Rocha"
+title: "Relatório sobre o Projecto de Introdução a Ciência de Dados 2020/2021"
+output: 
+  officedown::rdocx_document:
+    reference_docx: C://officedown.docx
+    mapstyles:
+      Normal: ['First Paragraph']
+---
+
+```{r setup, include=FALSE, echo = F}
+knitr::opts_chunk$set(echo = TRUE, fig.cap = TRUE)
+library(officedown)
+library(officer)
+
+fp <- fp_par(
+  text.align = "center", 
+  padding.bottom = 20, padding.top = 120, 
+  border.bottom = fp_border())
+
+ft <- fp_text(shading.color='#EFEFEF', bold = TRUE)
+```
+
+```{r, echo = F, include = F}
+
+Sys.setenv(CUDA_VISIBLE_DEVICES = "-1")
+    disabled <- c("disabled", "GPU")
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(caret)
+library(kernlab)
+library(pROC)
+library(plotROC)
+library(tensorflow)
+library(keras)
+library(gridGraphics)
+library(gridExtra)
+set.seed(69)  
+```
+
+```{r data_input, echo = F, include = F}
+df_temp <- read.csv("df_final.csv", dec = ".")
+
+names(df_temp) <- c("Peso","Altura",
+                    "IMC","IDADE",
+                    "PA_SISTOLICA","PA_DIASTOLICA",
+                    "PATOLOGIA","B2","SOPRO",
+                    "FC","HDA",
+                    "SEXO","MOTIVO")
+df_temp <-
+df_temp  %>%  select(PATOLOGIA,Peso,Altura,IMC,IDADE,
+                       PA_SISTOLICA,PA_DIASTOLICA,
+                       FC, HDA, B2, SOPRO,
+                       MOTIVO, SEXO) %>% drop_na %>%
+  mutate(PATOLOGIA = relevel(factor(PATOLOGIA),ref = "Normal"),
+         HDA = factor(HDA),
+         B2 = factor(B2),
+         SOPRO = factor(SOPRO),
+         MOTIVO = factor(MOTIVO),
+         SEXO = factor(SEXO)) 
+
+# SOPRO
+df_num <- df_temp %>% select(PATOLOGIA, Peso, Altura, IDADE, PA_SISTOLICA, PA_DIASTOLICA, FC)
+# B2
+```
+
+```{r frame, echo = F, include = F}
+index <- caret::createDataPartition(paste(df_temp$PATOLOGIA,
+                                          df_temp$B2,
+                                          df_temp$HDA,                                                                        df_temp$SOPRO,
+                                          df_temp$MOTIVO,
+                                          df_temp$SEXO),
+                                          p = 0.8, list = F)
+
+control <- caret::trainControl(method = "cv", number = 10)
+```
+
+```{r, echo = F}
+modelo <- as.formula(
+          PATOLOGIA ~ Peso + Altura + IDADE +
+          PA_SISTOLICA + PA_DIASTOLICA +
+          SOPRO + FC + HDA + B2 +
+          MOTIVO + SEXO)
+
+modelo_num <- as.formula(PATOLOGIA ~ Peso + Altura + 
+                           IDADE + PA_SISTOLICA + PA_DIASTOLICA + FC)
+```
+
+# Introduction
+
+Our goal with this work is to assess the performance of several different machine learning techniques in predicting the occurrence of cardiac pathology in pacients, given the predictors available in the 'UCMF' dataset that was provided. This dataset consists of clinical records of children between 0 and 19, collected in the Real Hospital Português, in Brazil.
+
+# Available data
+
+Below follows a description of the variables provided in the dataset as well as the processing that was performed on them. It should be noted that they are presented sequentially in the order which they were treated, so stats such as the ammount of missing values in a given variable already take into account previously excluded observations that would otherwise inflate that number.
+
+## **PATOLOGIA**
+
+This is our target variable whose occurrence we intend to model. It has two levels: 'Normal' and 'Anormal' (abnormal), although they are presented with different spellings. Spelling variations were aggregated into the 2 fundamental levels. We rejected observations with missing values on this variable, accounting for 1168 observations.
+
+```{r, echo = F, include = T, tab.id = "tabv1", tab.cap = "Distribution of the observations on the 'PATOLOGIA' variable in the processed dataset"}
+
+table(df_temp$PATOLOGIA,dnn = "levels") %>% data.frame 
+```
+
+## **IDADE**
+
+This variable represents age of the subjects. Observations outside of the ]0,20] range were rejected as they were either obvious input mistakes, such as negative ages, or ages outside of the intended range of this study (children and teenagers).
+
+```{r, echo = F, fig.id = "edaidade", fig.cap= "Response of the variable 'PATOLOGIA' according to 'IDADE', grouped by age cohorts", fig.height=3 }
+
+gridExtra::grid.arrange(
+
+df_temp %>% 
+  ggplot +
+  geom_histogram(aes(x = IDADE), binwidth = 1,fill = 'white', col = 'black') + 
+  theme_light()
+,
+df_temp %>%
+  mutate(IDADE = factor(trunc(IDADE))) %>%
+  select(PATOLOGIA,IDADE) %>%
+  table() %>%
+  data.frame() %>%
+  ggplot +
+  geom_tile(aes(x = PATOLOGIA, y = IDADE, fill = Freq)) +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = 'right') + 
+  scale_fill_gradient(low = "yellow", high = "Red"),
+nrow=1)
+```
+
+## **SEXO**
+
+This variable encodes the gender of the patient. After uniformization of the levels, we have considered 3 levels: Male, Female and Indetermined. Indetermined cases were a minority (398) so those observations were excluded.
+
+```{r, echo = F, fig.id = "edasexo", fig.cap= "Response of the variable 'PATOLOGIA' according to 'SEXO", warning = F, message = F, fig.height=3}
+
+gridExtra::grid.arrange(
+
+df_temp %>% 
+  ggplot +
+  geom_histogram(aes(x = SEXO), binwidth = 1,fill = 'white', col = 'black', stat = 'count') + 
+  theme_light()
+,
+df_temp %>%
+  mutate(IDADE = factor(trunc(IDADE))) %>%
+  select(SEXO,PATOLOGIA) %>%
+  table() %>%
+  data.frame() %>%
+  ggplot +
+  geom_tile(aes(x = SEXO, y = PATOLOGIA, fill = Freq)) +
+  theme_light() +
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = 'bottom')+ 
+  scale_fill_gradient(low = "yellow", high = "Red"),
+nrow=1)
+```
+
+## **Peso**, **Altura** and **IMC**
+
+These variables correspond to weight, height and body-mass index. These variables are expected to be important in assessing the likelihood of pathology occurrence, since they are directly linked to physical constitution. Missing values were inputated by performing polynomial regression on existing data. **IMC** for the inputated observations were calculated. A table \@ref from the World Health Organization (WHO) was then used as a reference for BMI distributions per age. Observations with a BMI below 0.8 * [3 *percentile*] or above 1.2 * [97 *percentile*] on their age class were excluded as outliers. 648 observations were thus excluded.
+
+## **SOPRO**
+
+This variable refers to the existence and type of heart murmur. For the purposes of this work, it was encoded to a binary factor corresponding to presence or absence of a murmur on the patient.
+
+## **B2**
+
+## **FC**
+
+## **HDA**
+
+## **MOTIVO**
+
+## Rejected variables
+
+The variables **ID**, **Convenio**, **Atendimento** and **DN** were not considered to be useful as reasonable preditors for cardiac pathology in the scope of this work and therefore will not be analized here. **PPA** consists on a classification of severity of hypertension, attributed according to the rank of the individual in the percentiles of expected distributions for BMI, age, gender, sistolic and diastolic pulse levels. Since we are using these variables in our models, such classification would be highly correlated with those variables. We have chosen to exclude **PPA** from our analysis. **PULSOS** (pulse) had 99.3% observations recorded as 'Normal'. Therefore we do not expect it to carry any significative correlation with our target variable or predictive power in the models we will be exploring. **HDA2** was rejected on account of
+
+```{r, echo = F, include = F}
+# df_core <- readxl::read_xls("UCMF.xls")
+# 
+# # corrigimos nome das variaveis
+# names(df_core) <- c("ID","Peso","Altura",
+#                     "IMC","Atendimento","DN",
+#                     "IDADE","Convenio","PULSOS",
+#                     "PA_SISTOLICA","PA_DIASTOLICA","PPA",
+#                     "PATOLOGIA","B2","SOPRO",
+#                     "FC","HDA1","HDA2",
+#                     "SEXO","MOTIVO1","MOTIVO2")
+# 
+# # rejeitamos observaçoes sem variavel resposta
+# df <- df_core %>% filter(!is.na(PATOLOGIA))
+# 
+# ## corrigimos os niveis da variavel
+# df$PATOLOGIA <- factor(df$PATOLOGIA)
+# levels(df$PATOLOGIA) <- c("Anormal","Anormal","Normal","Normal")
+# 
+# # IDADES
+# df <- df[df$IDADE > 0 & df$IDADE <= 20 & !is.na(df$IDADE),]
+# df$IDADE_class <- trunc(df$IDADE)
+# 
+# # SEXO
+# df$SEXO <- factor(df$SEXO)
+# levels(df$SEXO) <- c("F","F","I","M","M","M")
+# 
+# # Decisão: rejeitar sexo I
+# df <- df[df$SEXO != "I",]
+# 
+# 
+# 
+# df$HDA1[is.na(df$HDA1)] <- "Sem Historico"
+# df$HDA1 <- factor(df$HDA1) 
+# levels(df$HDA1)
+# 
+# df$HDA2[is.na(df$HDA2)] <- "Sem Historico"
+# df$HDA2 <- factor(df$HDA2)
+# levels(df$HDA2)
+# 
+# df$SOPRO <- factor(df$SOPRO)
+# levels(df$SOPRO) <- c("ausente", "presente", "presente",
+#                       "presente","presente","presente",
+#                       "presente")
+# 
+# df_temp <- df %>% drop_na %>%
+#   filter(PA_SISTOLICA<500) %>%
+#   select(PATOLOGIA,Peso,Altura,IMC,IDADE,
+#          PULSOS,PA_SISTOLICA,PA_DIASTOLICA,
+#          PPA,SOPRO,FC,
+#          HDA1,HDA2, B2,
+#          MOTIVO1,MOTIVO2)
+# 
+# df_num <- df_temp %>% select(PATOLOGIA, Peso, Altura, IDADE, PA_SISTOLICA, PA_DIASTOLICA, FC)
+```
+
+# Tested Models
+
+The model that has been tested in this work is thus:
+
+$$
+PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + SOPRO + FC + HDA + MOTIVO 
+$$
+A reduced variant of this model was be used in the methods that only support numerical variables:
+
+$$
+PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + FC
+$$
+
+## Logistic Regression
+
+```{r, echo = F, warning=F, message =F}
+source("R_0040_logistic_regression.R")
+```
+
+Data was fitted to a sigmoid curve via logistic regression. Accuracy was `r round(ct_rl_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_rl_test$overall["Accuracy"]*100,2)` % for the test dataset, with the cutoff point set at 0.5. **PLOTAR CUTOFF**  
+
+```{r, echo = F, tab.id = "ctrl", tab.cap = ""}
+rbind(
+cbind(
+ct_rl_train$table,ct_rl_test$table),
+c("train","train","test","test")) %>% data.frame
+```
+
+## Linear Discriminant Analysis
+
+```{r, echo = F}
+source("R_0060_LDA.R")
+```
+
+Linear Discriminant Analysis was performed in the dataset. Accuracy was `r round(ct_lda_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_lda_test$overall["Accuracy"]*100,2)` % for the test dataset
+
+```{r, echo = F, tab.id = "ctlda", tab.cap = ""}
+rbind(
+cbind(
+ct_lda_train$table,ct_lda_test$table),
+c("train","train","test","test")) %>% data.frame
+```
+## Naive Bayes
+
+```{r, echo = F}
+source("R_0070_NBayes.R")
+```
+
+```{r, echo = F, tab.id = "ctnb", tab.cap = ""}
+rbind(
+cbind(
+ct_nb_train$table,ct_nb_test$table),
+c("train","train","test","test")) %>% data.frame
+```
+
+## Random Forest
+
+Testar tambem com preditores categoricos
+
+```{r}
+# source("R_0080_RF.R")
+```
+
+## Recurring Neural Network
+
+```{r}
+# source("R_000_RNN.R")
+```
+
+## ROC plots
+
+```{r ROC, eval = T, echo = F, include = T, fig.cap = "rocplot"}
+# Regressao Logistica
+p1 <-
+  ggplot() + 
+  geom_roc(data = data.frame(predictor = roc_rl$original.predictor,
+           response = roc_rl$original.response),
+           aes(m = predictor, d = response),
+           col = "darkgreen") + 
+  # geom_rocci(aes(m = predictor, d = response)) +
+  theme_light() 
+
+p1 + geom_text(aes(x = 0.5, y = 0.5,
+                   label= paste("AUC = ",
+                                round(calc_auc(p1)$AUC, 4))),
+               col = "darkgreen")
+```
+# Model comparisons
+
+```{r}
+
+```
+
