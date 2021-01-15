@@ -12,12 +12,12 @@ ct_nb_test <-
 confusionMatrix(df_temp[-index,]$PATOLOGIA,
                 predict(model_bayes, newdata = df_temp[-index,]))
 
-ggplot() + 
-  # geom_point(aes(x = nd$x, y = nd$y)) + 
-  geom_point(data = df_temp[index,],
-             aes(x = Peso, 
-                 y = Altura,
-                 col = PATOLOGIA==predict(model_bayes,
-                                          newdata = df_temp[index,]))) + 
-  theme_light() + 
-  labs(col = "correct?", title = "Naive Bayes")
+# ggplot() + 
+#   # geom_point(aes(x = nd$x, y = nd$y)) + 
+#   geom_point(data = df_temp[index,],
+#              aes(x = Peso, 
+#                  y = Altura,
+#                  col = PATOLOGIA==predict(model_bayes,
+#                                           newdata = df_temp[index,]))) + 
+#   theme_light() + 
+#   labs(col = "correct?", title = "Naive Bayes")

@@ -1,4 +1,4 @@
-grelha <- expand.grid(mtry = c(1:16))
+grelha <- expand.grid(mtry = seq(3,12,3))
 
 forest <- caret::train(modelo,
                        method="rf",
@@ -8,17 +8,18 @@ forest <- caret::train(modelo,
                        preProc = c("center","scale"),
                        ntree=500,
                        metric="Accuracy")
-
-summary(forest)
-print(forest)
-
+ct_rf_train <-
 # confusion matrix of the training data
 caret::confusionMatrix(forest)
 
 # confusion matrix of the holdout data
-confusionMatrix(df_num[-index,]$PATOLOGIA,
-                predict(forest, newdata = df_num[-index,]))
+ct_rf_test <-
+confusionMatrix(df_temp[-index,]$PATOLOGIA,
+                predict(forest, newdata = df_temp[-index,]))
 
 var_rank<-data.frame(variables=rownames(forest$finalModel$importance),importance=forest$finalModel$importance)
 
-var_rank[order(var_rank$IncNodePurity,decreasing=T),][1:20,] %>% View
+var_rank[order(var_rank$MeanDecreaseGini,decreasing=T),][1:20,] %>% View
+
+
+save(forest, ct_rf_train, ct_rf_test, var_rank, file = "forest.Rdata")

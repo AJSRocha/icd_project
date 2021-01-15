@@ -1,8 +1,5 @@
 model_lda <- MASS::lda(modelo, data = df_temp[index,])
 
-MASS::ldahist(predict(model_lda, data = df_temp[index,])$x[,1],
-              g = predict(model_lda, data = df_temp[index,])$class)
-
 lda_probs <- predict(model_lda, 
                      newdata = df_temp[index,], 
                      type = "response")

@@ -40,6 +40,28 @@ library(gridExtra)
 set.seed(69)  
 ```
 
+```{python, echo = F, message = F}
+import pandas as pd
+import numpy as np
+from scipy.optimize import curve_fit
+import math
+import seaborn as sns
+import sklearn as skl
+import scikitplot as skplt
+import warnings
+import matplotlib.pyplot as plt
+import csv
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import chi2
+import statsmodels.api as sm
+import dill
+```
+
+```{r, echo = F, message = F, warning = F, eval = T}
+# reticulate::source_python('datacleaning.py')
+reticulate::source_python('featureselection.py')
+```
+
 ```{r data_input, echo = F, include = F}
 df_temp <- read.csv("df_final.csv", dec = ".")
 
@@ -81,8 +103,8 @@ control <- caret::trainControl(method = "cv", number = 10)
 modelo <- as.formula(
           PATOLOGIA ~ Peso + Altura + IDADE +
           PA_SISTOLICA + PA_DIASTOLICA +
-          SOPRO + FC + HDA + B2 +
-          MOTIVO + SEXO)
+          SOPRO + FC  +
+          MOTIVO)
 
 modelo_num <- as.formula(PATOLOGIA ~ Peso + Altura + 
                            IDADE + PA_SISTOLICA + PA_DIASTOLICA + FC)
@@ -94,159 +116,131 @@ Our goal with this work is to assess the performance of several different machin
 
 # Available data
 
-Below follows a description of the variables provided in the dataset as well as the processing that was performed on them. It should be noted that they are presented sequentially in the order which they were treated, so stats such as the ammount of missing values in a given variable already take into account previously excluded observations that would otherwise inflate that number.
+Below follows a description of the variables provided in the dataset as well as the processing that was performed on them. The variables **ID**, **Convenio**, **Atendimento** and **DN** were not considered to be useful as reasonable preditors for cardiac pathology in the scope of this work and therefore will not be used. **PPA** consists on a classification of severity of hypertension, attributed according to the rank of the individual in the percentiles of expected distributions for BMI, age, gender, sistolic and diastolic pulse levels. Since we are using these variables in our models, such classification would be highly correlated with those variables. We have chosen to exclude **PPA** from our analysis. The variables that were considered for pre-processing were:
 
-## **PATOLOGIA**
+* **PATOLOGIA**: This is our target variable whose occurrence we intend to model. It has two levels: 'Normal' and 'Anormal' (abnormal), although they are presented with different spellings. Spelling variations were aggregated into the 2 fundamental levels. We rejected observations with missing values on this variable, accounting for 1168 observations. On the final dataset there were 8308 observations labeled as "Normal" and 5260 labeled as "Anormal".
 
-This is our target variable whose occurrence we intend to model. It has two levels: 'Normal' and 'Anormal' (abnormal), although they are presented with different spellings. Spelling variations were aggregated into the 2 fundamental levels. We rejected observations with missing values on this variable, accounting for 1168 observations.
+* **IDADE**: This variable represents age of the subjects. Observations outside of the ]0,20] range were rejected as they were either obvious input mistakes, such as negative ages, or ages outside of the intended range of this study (children and teenagers).
 
-```{r, echo = F, include = T, tab.id = "tabv1", tab.cap = "Distribution of the observations on the 'PATOLOGIA' variable in the processed dataset"}
+* **SEXO**: This variable encodes the gender of the patient. After uniformization of the levels, we have considered 3 levels: Male, Female and Indetermined. Indetermined cases were a minority (398) so those observations were excluded.
 
-table(df_temp$PATOLOGIA,dnn = "levels") %>% data.frame 
-```
+* **Peso**, **Altura** and **IMC**: These variables correspond to weight, height and body-mass index. These variables are expected to be important in assessing the likelihood of pathology occurrence, since they are directly linked to physical constitution. Missing values were inputated by performing polynomial regression on existing data. **IMC** for the inputated observations were calculated. A table \@ref from the World Health Organization (WHO) was then used as a reference for BMI distributions per age. Observations with a BMI below 0.8 * [3 *percentile*] or above 1.2 * [97 *percentile*] on their age class were excluded as outliers. 648 observations were thus excluded.
 
-## **IDADE**
+* **SOPRO**: This variable refers to the existence and type of heart murmur. For the purposes of this work, it was encoded to a binary factor corresponding to presence or absence of a murmur on the patient.
 
-This variable represents age of the subjects. Observations outside of the ]0,20] range were rejected as they were either obvious input mistakes, such as negative ages, or ages outside of the intended range of this study (children and teenagers).
+* **B2**: This variable correspondes to the secondary heart sound type. An overwhelming percentage of the cases fall in the 'Normal' category. 
 
-```{r, echo = F, fig.id = "edaidade", fig.cap= "Response of the variable 'PATOLOGIA' according to 'IDADE', grouped by age cohorts", fig.height=3 }
+* **FC**: Representing heart rate in beats per minute, this variable is numeric. Values above 230 were excluded as probable errors, considering values above this threshold would be a symptom of extreme exertion. Missing values were inputated with kNN (n = 9), based on distances from the variables **IMC** and **FC**.
 
-gridExtra::grid.arrange(
+* **PA_SISTOLICA** and **PA_DIASTOLICA**: Two numeric variables that represent sistolic and diastolic blood pressure. Both variables contain an overwhelming quantity of missing values, but were assumed to be too valuable to be dropped. Therefore, missing values were inputated with kNN (n = 7), based on the distances from the variables **Peso**, **Altura** and **IDADE**. Two outliers were excluded from **PA_SISTOLICA** on account of being over 500, a completely unplausible value.
 
+* **HDA**: The information concerning previous history of disease is recorded on two variables, **HDA.1** and **HDA.2**. These variables were merged into a single variable under the assumption that missing values on both fields were assumed to be "lack of previous history", as we expect such information to be explicitely recorded, otherwise.
+
+* **MOTIVO**: This variable is the aggregation of 2 variables, **MOTIVO1** and **MOTIVO2**. These variables represent the reason for the clinical evaluation. **MOTIVO1** is divided into 7 broad categories and **MOTIVO2** divides **MOTIVO1** into further subcategories. This results in both variables being extremely correlated, with **MOTIVO2** providing more detail into the motive at the expense of having some levels with very low representation in the dataset. The missing values of **MOTIVO2** were completed with the corresponding entry in **MOTIVO1**.
+
+* **PULSOS** (pulse) had 99.3% observations recorded as 'Normal'. Therefore we do not expect it to carry any significative correlation with our target variable or predictive power in the models we will be exploring. This variable was consequently immediatly dropped.
+
+Figure \@ref(fig:eda1) shows the histograms/scatterplots of variables that were considered in this work and their interaction with our response variable, **PATOLOGIA**. A cursory analysis of these plots calls into question the ability of variables such as **SEXO**, **HDA** and **PPA** to discriminate the occurrence of pathology. 
+
+```{r, echo = F, fig.id = "eda1", fig.cap= "", fig.height = 6, message = F, warning =F, fig.width= 6}
+
+# gridExtra::grid.arrange(
+p1<-
 df_temp %>% 
   ggplot +
-  geom_histogram(aes(x = IDADE), binwidth = 1,fill = 'white', col = 'black') + 
-  theme_light()
-,
-df_temp %>%
-  mutate(IDADE = factor(trunc(IDADE))) %>%
-  select(PATOLOGIA,IDADE) %>%
-  table() %>%
-  data.frame() %>%
-  ggplot +
-  geom_tile(aes(x = PATOLOGIA, y = IDADE, fill = Freq)) +
-  theme_light() +
-  theme(axis.text.x = element_text(angle = 90),
-        legend.position = 'right') + 
-  scale_fill_gradient(low = "yellow", high = "Red"),
-nrow=1)
-```
-
-## **SEXO**
-
-This variable encodes the gender of the patient. After uniformization of the levels, we have considered 3 levels: Male, Female and Indetermined. Indetermined cases were a minority (398) so those observations were excluded.
-
-```{r, echo = F, fig.id = "edasexo", fig.cap= "Response of the variable 'PATOLOGIA' according to 'SEXO", warning = F, message = F, fig.height=3}
-
-gridExtra::grid.arrange(
-
+  geom_histogram(aes(x = trunc(IDADE), fill = PATOLOGIA),stat = 'count', binwidth = 1, col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  labs(x = "IDADE") +
+  # ylim(c(0,35)) + 
+  theme(legend.position = 'top')
+p2<-
 df_temp %>% 
   ggplot +
-  geom_histogram(aes(x = SEXO), binwidth = 1,fill = 'white', col = 'black', stat = 'count') + 
-  theme_light()
-,
-df_temp %>%
-  mutate(IDADE = factor(trunc(IDADE))) %>%
-  select(SEXO,PATOLOGIA) %>%
-  table() %>%
-  data.frame() %>%
+  geom_histogram(aes(x = SEXO, fill = PATOLOGIA),stat = 'count', col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) 
+p3<-
+df_temp %>% 
   ggplot +
-  geom_tile(aes(x = SEXO, y = PATOLOGIA, fill = Freq)) +
-  theme_light() +
-  theme(axis.text.x = element_text(angle = 90),
-        legend.position = 'bottom')+ 
-  scale_fill_gradient(low = "yellow", high = "Red"),
-nrow=1)
+  geom_histogram(aes(x = SOPRO,fill = PATOLOGIA), stat = 'count', col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  theme(legend.position = 'top')
+p4<-
+df_temp %>% 
+  ggplot +
+  geom_point(aes(x = Peso, y = Altura, fill = PATOLOGIA),
+             size = 2, col = 'black', pch = 21) + 
+  theme_light() + 
+  theme(legend.position = 'none') + 
+  labs(col = "") + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  facet_wrap(PATOLOGIA ~.) + 
+  theme(legend.position = 'top')
+p5<-
+df_temp %>% 
+  ggplot +
+  geom_histogram(aes(x = B2,fill = PATOLOGIA), stat = 'count', col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  labs(y = "") + 
+  theme(legend.position = 'top')
+p6<-
+df_temp %>% 
+  ggplot +
+  geom_histogram(aes(x = FC,fill = PATOLOGIA), stat = 'count', col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  labs(y = "") + 
+  theme(legend.position = 'top')
+p7<-
+df_temp %>% 
+  ggplot +
+  geom_point(aes(x = PA_SISTOLICA, y = PA_DIASTOLICA, fill = PATOLOGIA),
+             size = 2, col = 'black', pch = 21) + 
+  theme_light() + 
+  theme(legend.position = 'none') + 
+  labs(col = "") + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  facet_wrap(PATOLOGIA ~.) + 
+  theme(legend.position = 'top')
+p8<-
+df_temp %>% 
+  ggplot +
+  geom_histogram(aes(x = HDA, fill = PATOLOGIA), stat = 'count', col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  labs(y = "") + 
+  theme(legend.position = 'top')
+p9<-
+df_temp %>% 
+  ggplot +
+  geom_histogram(aes(x = MOTIVO, fill = PATOLOGIA), stat = 'count', col = 'black') + 
+  theme_light() + 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  labs(y = "") + 
+  theme(legend.position = 'top')
+# MOTIVO
+
+grid.arrange(p1,p2,p3,
+             p4,p5,p6,
+             p7,p8,p9)
+
 ```
 
-## **Peso**, **Altura** and **IMC**
+A closer look at the correlation between the variables that were considered for this work (Figure \@ref(fig:corrplot)) confirms that variables **SEXO**, **B2**, **HDA** and **MOTIVO** should not be expected to contribute to a model that attemps to predict the occurrence of pathology. Therefore these variables will not be used.
 
-These variables correspond to weight, height and body-mass index. These variables are expected to be important in assessing the likelihood of pathology occurrence, since they are directly linked to physical constitution. Missing values were inputated by performing polynomial regression on existing data. **IMC** for the inputated observations were calculated. A table \@ref from the World Health Organization (WHO) was then used as a reference for BMI distributions per age. Observations with a BMI below 0.8 * [3 *percentile*] or above 1.2 * [97 *percentile*] on their age class were excluded as outliers. 648 observations were thus excluded.
-
-## **SOPRO**
-
-This variable refers to the existence and type of heart murmur. For the purposes of this work, it was encoded to a binary factor corresponding to presence or absence of a murmur on the patient.
-
-## **B2**
-
-## **FC**
-
-## **HDA**
-
-## **MOTIVO**
-
-## Rejected variables
-
-The variables **ID**, **Convenio**, **Atendimento** and **DN** were not considered to be useful as reasonable preditors for cardiac pathology in the scope of this work and therefore will not be analized here. **PPA** consists on a classification of severity of hypertension, attributed according to the rank of the individual in the percentiles of expected distributions for BMI, age, gender, sistolic and diastolic pulse levels. Since we are using these variables in our models, such classification would be highly correlated with those variables. We have chosen to exclude **PPA** from our analysis. **PULSOS** (pulse) had 99.3% observations recorded as 'Normal'. Therefore we do not expect it to carry any significative correlation with our target variable or predictive power in the models we will be exploring. **HDA2** was rejected on account of
-
-```{r, echo = F, include = F}
-# df_core <- readxl::read_xls("UCMF.xls")
-# 
-# # corrigimos nome das variaveis
-# names(df_core) <- c("ID","Peso","Altura",
-#                     "IMC","Atendimento","DN",
-#                     "IDADE","Convenio","PULSOS",
-#                     "PA_SISTOLICA","PA_DIASTOLICA","PPA",
-#                     "PATOLOGIA","B2","SOPRO",
-#                     "FC","HDA1","HDA2",
-#                     "SEXO","MOTIVO1","MOTIVO2")
-# 
-# # rejeitamos observaçoes sem variavel resposta
-# df <- df_core %>% filter(!is.na(PATOLOGIA))
-# 
-# ## corrigimos os niveis da variavel
-# df$PATOLOGIA <- factor(df$PATOLOGIA)
-# levels(df$PATOLOGIA) <- c("Anormal","Anormal","Normal","Normal")
-# 
-# # IDADES
-# df <- df[df$IDADE > 0 & df$IDADE <= 20 & !is.na(df$IDADE),]
-# df$IDADE_class <- trunc(df$IDADE)
-# 
-# # SEXO
-# df$SEXO <- factor(df$SEXO)
-# levels(df$SEXO) <- c("F","F","I","M","M","M")
-# 
-# # Decisão: rejeitar sexo I
-# df <- df[df$SEXO != "I",]
-# 
-# 
-# 
-# df$HDA1[is.na(df$HDA1)] <- "Sem Historico"
-# df$HDA1 <- factor(df$HDA1) 
-# levels(df$HDA1)
-# 
-# df$HDA2[is.na(df$HDA2)] <- "Sem Historico"
-# df$HDA2 <- factor(df$HDA2)
-# levels(df$HDA2)
-# 
-# df$SOPRO <- factor(df$SOPRO)
-# levels(df$SOPRO) <- c("ausente", "presente", "presente",
-#                       "presente","presente","presente",
-#                       "presente")
-# 
-# df_temp <- df %>% drop_na %>%
-#   filter(PA_SISTOLICA<500) %>%
-#   select(PATOLOGIA,Peso,Altura,IMC,IDADE,
-#          PULSOS,PA_SISTOLICA,PA_DIASTOLICA,
-#          PPA,SOPRO,FC,
-#          HDA1,HDA2, B2,
-#          MOTIVO1,MOTIVO2)
-# 
-# df_num <- df_temp %>% select(PATOLOGIA, Peso, Altura, IDADE, PA_SISTOLICA, PA_DIASTOLICA, FC)
+```{python, echo = F, message = T, warning = T, fig.id = "corrplot", fig.cap = ""}
+plt.figure(figsize=(40,40))
+#plot heat map
+g=sns.heatmap(dfb[top_corr_features].corr(),annot=True,cmap="RdYlGn")
+plt.show()
 ```
+
+The model that has been tested in this work is $PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + SOPRO + FC + HDA + MOTIVO$. When working with models that can only be applied to numerical variables, the variant $PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + FC$ will be used instead.
 
 # Tested Models
-
-The model that has been tested in this work is thus:
-
-$$
-PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + SOPRO + FC + HDA + MOTIVO 
-$$
-A reduced variant of this model was be used in the methods that only support numerical variables:
-
-$$
-PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + FC
-$$
 
 ## Logistic Regression
 
@@ -255,56 +249,6 @@ source("R_0040_logistic_regression.R")
 ```
 
 Data was fitted to a sigmoid curve via logistic regression. Accuracy was `r round(ct_rl_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_rl_test$overall["Accuracy"]*100,2)` % for the test dataset, with the cutoff point set at 0.5. **PLOTAR CUTOFF**  
-
-```{r, echo = F, tab.id = "ctrl", tab.cap = ""}
-rbind(
-cbind(
-ct_rl_train$table,ct_rl_test$table),
-c("train","train","test","test")) %>% data.frame
-```
-
-## Linear Discriminant Analysis
-
-```{r, echo = F}
-source("R_0060_LDA.R")
-```
-
-Linear Discriminant Analysis was performed in the dataset. Accuracy was `r round(ct_lda_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_lda_test$overall["Accuracy"]*100,2)` % for the test dataset
-
-```{r, echo = F, tab.id = "ctlda", tab.cap = ""}
-rbind(
-cbind(
-ct_lda_train$table,ct_lda_test$table),
-c("train","train","test","test")) %>% data.frame
-```
-## Naive Bayes
-
-```{r, echo = F}
-source("R_0070_NBayes.R")
-```
-
-```{r, echo = F, tab.id = "ctnb", tab.cap = ""}
-rbind(
-cbind(
-ct_nb_train$table,ct_nb_test$table),
-c("train","train","test","test")) %>% data.frame
-```
-
-## Random Forest
-
-Testar tambem com preditores categoricos
-
-```{r}
-# source("R_0080_RF.R")
-```
-
-## Recurring Neural Network
-
-```{r}
-# source("R_000_RNN.R")
-```
-
-## ROC plots
 
 ```{r ROC, eval = T, echo = F, include = T, fig.cap = "rocplot"}
 # Regressao Logistica
@@ -322,9 +266,387 @@ p1 + geom_text(aes(x = 0.5, y = 0.5,
                                 round(calc_auc(p1)$AUC, 4))),
                col = "darkgreen")
 ```
+
+## Linear Discriminant Analysis
+
+```{r, echo = F}
+source("R_0060_LDA.R")
+```
+
+Linear Discriminant Analysis was performed in the dataset. Accuracy was `r round(ct_lda_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_lda_test$overall["Accuracy"]*100,2)` % for the test dataset
+
+```{r, echo = F}
+MASS::ldahist(predict(model_lda, data = df_temp[index,])$x[,1],
+              g = predict(model_lda, data = df_temp[index,])$class)
+```
+
+## Naive Bayes
+
+```{r, echo = F}
+source("R_0070_NBayes.R")
+```
+
+## Random Forest
+
+```{r, echo = F}
+# source("R_0080_RF.R")
+load("forest.Rdata")
+```
+
+A Random Forest ensemble analysis was performed with 500 iterations, testing for 3,6,9 and 12 variables from the dataset. Best performance of the model was achieved with 3 variables. Remarkably, the RF ensemble had the exact same performance as the Logistic Regression on the validation set.
+
+```{r, echo = F}
+ggplot(data.frame(variables=rownames(forest$finalModel$importance),importance=forest$finalModel$importance))+
+  geom_bar(stat="identity",aes(y=variables,x=MeanDecreaseGini))+
+  theme_light() + labs(y = "") + 
+  theme(axis.text.x = element_text(angle=90),
+        axis.text.y = element_text(size = 8))
+```
+
+## Recurring Neural Network
+
+```{r, echo = F, warning = F, message = F, include = F}
+source("R_0090_RNN.R")
+# load("nn.Rdata")
+```
+
+The dataset was used to train an Artificial Neural Network. Categorical variables were encoded as binary dummy variables (*one-hot encoding*) and continuous variables were centered and scaled into a [0,1] range. The baseline topology that was considered consisted in a single layer perceptron (one hidden layer). The hidden layer consisted of 20 units with a rectified linear (*ReLU*) activation function. A bias term was introduced. The activation function in the output layer was a sigmoid function. The optimizer was 'RMSprop' with learning rate of 0.0001 and the loss function was binary crossentropy. The network was trained for 100 epochs with a batch size of 256 observations. Performance was on par with the previous models
+
+```{r, echo = F, message = F, warning = F}
+plot(history) + 
+  theme_light() + 
+  theme(legend.position = 'bottom')
+```
+
+```{r, echo = F, warning=F, message=F}
+ct_nn_test <-
+confusionMatrix(factor(
+  ifelse(model_nn %>% predict(x_val) > 0.5,"Normal","Anormal")),
+  df_temp[-index,]$PATOLOGIA)
+```
+
 # Model comparisons
 
-```{r}
+```{r, echo = F, warning = F, message = F, fig.id = "comp", fig.cap = "", fig.height=4}
 
+table <- ct_rl_test$table %>% data.frame
+ct1 <-
+table %>%
+  mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = Freq/sum(Freq)) %>% 
+ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  xlim(rev(levels(table$Reference))) + 
+  labs(title = "logistic regression") + 
+  theme(legend.position = 'none')
+
+
+table <- ct_lda_test$table %>% data.frame
+ct2 <-
+table %>%
+  mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = Freq/sum(Freq)) %>% 
+ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  xlim(rev(levels(table$Reference))) + 
+  labs(title = "lda") + 
+  theme(legend.position = 'none')
+
+table <- ct_nb_test$table %>% data.frame
+ct3 <-
+table %>%
+  mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = Freq/sum(Freq)) %>% 
+ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  xlim(rev(levels(table$Reference))) + 
+  labs(title = "Naive Bayes") + 
+  theme(legend.position = 'none')
+
+
+table <- ct_rf_test$table %>% data.frame
+ct4 <-
+table %>%
+  mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = Freq/sum(Freq)) %>% 
+ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  xlim(rev(levels(table$Reference))) + 
+  labs(title = "Random Forest") + 
+  theme(legend.position = 'none')
+
+table <- ct_nn_test$table %>% data.frame
+ct5 <-
+table %>%
+  mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = Freq/sum(Freq)) %>% 
+ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  xlim(rev(levels(table$Reference))) + 
+  labs(title = "rNN") + 
+  theme(legend.position = 'none')
+
+
+grid.arrange(ct1,ct2,ct3,
+             ct4,ct5,ncol =2)
 ```
+
+## Performance on the validation set
+
+```{r, echo = F, message = F, warning = F, eval = T}
+compara <-
+df_temp[-index,] %>%
+    mutate(id = 1:(nrow(df_temp) - length(index)),
+           Peso = df_temp[-index,]$Peso,
+           Altura = df_temp[-index,]$Altura,  
+           response = df_temp[-index,]$PATOLOGIA,
+           RL = ifelse(predict(model_rl,
+                                  newdata = df_temp[-index,]) > 0.5,
+                                  "Anormal","Normal") == response,
+           LDA = ifelse(predict(model_lda, 
+                                  newdata = df_temp[-index,])$x[,1] > 
+                            model_lda$prior[1] , "Anormal", "Normal") == response,
+           NB = predict(model_bayes, newdata = df_temp[-index,]) == response,
+           RF = predict(forest, newdata = df_temp[-index,]) == response,
+           RNN = ifelse(model_nn %>% predict(x_val) > 0.5,"Normal","Anormal") == response) 
+
+compara <- 
+compara %>% select(id,Peso,Altura,response,RL,LDA,NB,RF,RNN) %>%
+  reshape2::melt(id.vars = c("id","Peso","Altura","response"))
+
+compara %>% 
+ ggplot() + 
+ geom_point(aes(x = Peso,
+                 y = Altura,
+                 col = value),
+             size = 1) +
+  theme_light() +
+  theme(legend.position = 'bottom') +
+  labs(col = "correct?") + 
+  facet_wrap(variable ~.)
+
+
+
+# # RL
+# ggplot(df_temp[-index,]) + 
+#   geom_point(aes(x = Peso,
+#                  y = Altura,
+#                  col = df_temp[-index,]$PATOLOGIA ==
+#                    ifelse(predict(model_rl,
+#                                   newdata = df_temp[-index,]) > 0.5,"Anormal","Normal")),
+#              size = 1) + 
+#   theme_light() + 
+#   theme(legend.position = 'bottom') +
+#   labs(col = "correct?", title = "Logistic Regression")
+# ,ncol = 2)
+
+
+# LDA
+# ggplot(df_temp[-index,]) + 
+#   geom_point(aes(x = Peso,
+#                  y = Altura,
+#                  col = df_temp[-index,]$PATOLOGIA ==
+#                    ifelse(predict(model_lda, 
+#                                   newdata = df_temp[-index,])$x[,1] > 
+#                             model_lda$prior[1] , "Anormal", "Normal")),
+#              size = 1) + 
+#   theme_light() + 
+#   theme(legend.position = 'bottom') +
+#   labs(col = "correct?", title = "Linear Discriminant Analysis")
+# 
+# # Naive Bayes
+# ggplot(df_temp[-index,]) + 
+#   geom_point(aes(x = Peso,
+#                  y = Altura,
+#                  col = df_temp[-index,]$PATOLOGIA ==
+#                    predict(model_bayes, newdata = df_temp[-index,])),
+#              size = 1) + 
+#   theme_light() + 
+#   theme(legend.position = 'bottom') +
+#   labs(col = "correct?", title = "Naive Bayes")
+# ,ncol = 2)
+```
+
+# Conclusions
+
+
+
+
+```{python, echo = F, message = F, include = T, eval = F}
+m_height_0_36.plot(x='Agemos', y='P50')
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+m_weight_0_36.plot(x='Agemos', y='P50')
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+m_height_2_20.plot(x='Agemos', y='P50')
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+m_weight_2_20.plot(x='Agemos', y='P50')
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+m_bmi_2_20.plot(x='Agemos', y='P50')
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+f_bmi_2_20.plot(x='Agemos', y='P50')
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IDADE", y="Altura",
+              hue="SEXO",
+              data=df);
+plt.show()              
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IDADE", y="Peso",
+              hue="SEXO",
+              data=df);
+plt.show()              
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="Peso", y="Altura",
+              hue="SEXO",
+              data=df);
+plt.show()              
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IDADE", y="IMC",
+              hue="SEXO",
+              data=df);
+plt.show()              
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+df['FC'].plot.box()
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IMC", y="FC",
+                hue="SEXO",
+                data=df);
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+df['FC'].plot.box()
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IMC", y="FC",
+                hue="SEXO",
+                data=df);
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IMC", y="PA SISTOLICA",
+                hue="SEXO",
+                data=df[(df['PA SISTOLICA']<500) & (df['PA SISTOLICA']>60)]);
+plt.show()                
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="Altura", y="PA DIASTOLICA",
+                hue="SEXO",
+                data=df3);
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IMC", y="PA DIASTOLICA",
+                hue="SEXO",
+                data=df);
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+df['PA DIASTOLICA'].plot.box()
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+sns.scatterplot(x="IMC", y="PA SISTOLICA",
+                hue="SEXO",
+                data=df);
+plt.show()
+```
+
+```{python, echo = F, message = F, include = T, eval = F}
+df['PA SISTOLICA'].plot.box()
+plt.show()
+```
+
+```{python, echo = F, message = F, eval = F}
+X_plot = m_bmi_2_20['Agemos']
+Y_plot = m_bmi_2_20['P85']
+X2_plot = f_bmi_2_20['Agemos']
+Y2_plot = f_bmi_2_20['P85']
+g = sns.FacetGrid(dfx, size = 6, hue = "SEXO")
+g = g.map(plt.scatter, "IDADE", "IMC", edgecolor="w")
+#m_bmi_2_20.plot(x='Agemos', y='P50')
+plt.plot(X_plot, Y_plot, color='r')
+plt.plot(X2_plot, Y2_plot, color='g')
+plt.show()
+```
+
+```{python, echo = F, message = F, warning = F, eval = F}
+feat_importances.nlargest(15).plot(kind='barh')
+plt.show()
+```
+
+```{python, echo = F, message = F, warning = F, eval = F}
+plt.figure(figsize=(41,41))
+#plot heat map
+g=sns.heatmap(dfa[top_corr_features].corr(),annot=True,cmap="RdYlGn")
+plt.show()
+```
+
+
+```{python, echo = F, message = F, warning = F, eval = F}
+dfb = pd.get_dummies(dfb)
+corrmat = dfb.corr()
+top_corr_features = corrmat.index
+plt.figure(figsize=(27,27))
+#plot heat map
+g=sns.heatmap(dfb[top_corr_features].corr(),annot=True,cmap="RdYlGn")
+plt.show()
+```
+
+
 
