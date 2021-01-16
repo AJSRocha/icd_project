@@ -1,7 +1,7 @@
 ---
 date: "`r Sys.Date()`"
 author: "Miguel Tavares, Hélder Vieira, Alberto Rocha"
-title: "Relatório sobre o Projecto de Introdução a Ciência de Dados 2020/2021"
+title: "Introduction to Data Science Project Report"
 output: 
   officedown::rdocx_document:
     reference_docx: C://officedown.docx
@@ -37,6 +37,7 @@ library(tensorflow)
 library(keras)
 library(gridGraphics)
 library(gridExtra)
+library(reticulate)
 set.seed(69)  
 ```
 
@@ -112,37 +113,37 @@ modelo_num <- as.formula(PATOLOGIA ~ Peso + Altura +
 
 # Introduction
 
-Our goal with this work is to assess the performance of several different machine learning techniques in predicting the occurrence of cardiac pathology in pacients, given the predictors available in the 'UCMF' dataset that was provided. This dataset consists of clinical records of children between 0 and 19, collected in the Real Hospital Português, in Brazil.
+Our goal with this work is to assess the performance of several different machine learning techniques in predicting the occurrence of cardiac pathology in patients, given the predictors available in the ‘UCMF’ dataset that was provided. This dataset consists of clinical records of children between 0 and 19, collected in the Real Hospital Português, in Brazil.
 
 # Available data
 
-Below follows a description of the variables provided in the dataset as well as the processing that was performed on them. The variables **ID**, **Convenio**, **Atendimento** and **DN** were not considered to be useful as reasonable preditors for cardiac pathology in the scope of this work and therefore will not be used. **PPA** consists on a classification of severity of hypertension, attributed according to the rank of the individual in the percentiles of expected distributions for BMI, age, gender, sistolic and diastolic pulse levels. Since we are using these variables in our models, such classification would be highly correlated with those variables. We have chosen to exclude **PPA** from our analysis. The variables that were considered for pre-processing were:
+Below follows a description of the variables provided in the dataset as well as the processing that was performed. The variables **ID**, **Convenio**, **Atendimento** and **DN** were not considered to be useful as reasonable predictors for cardiac pathology in the scope of this work and therefore will not be used. **PPA** consists of a classification of severity of hypertension, attributed according to the rank of the individual in the percentiles of expected distributions for BMI, age, gender, systolic and diastolic pulse levels. Since we are using these variables in our models, such classification would be highly correlated with those variables. We have chosen to exclude **PPA** from our analysis. The variables that were considered for pre-processing were:
 
 * **PATOLOGIA**: This is our target variable whose occurrence we intend to model. It has two levels: 'Normal' and 'Anormal' (abnormal), although they are presented with different spellings. Spelling variations were aggregated into the 2 fundamental levels. We rejected observations with missing values on this variable, accounting for 1168 observations. On the final dataset there were 8308 observations labeled as "Normal" and 5260 labeled as "Anormal".
 
-* **IDADE**: This variable represents age of the subjects. Observations outside of the ]0,20] range were rejected as they were either obvious input mistakes, such as negative ages, or ages outside of the intended range of this study (children and teenagers).
+* **IDADE**: This variable represents age of the subjects. Observations outside of the ]0,20] range were rejected as they were either obvious input mistakes, such as negative ages, or ages outside of the intended range of this study (children and teenagers) and blank values (NA). A total of 1882 observations was excluded.
 
 * **SEXO**: This variable encodes the gender of the patient. After uniformization of the levels, we have considered 3 levels: Male, Female and Indetermined. Indetermined cases were a minority (398) so those observations were excluded.
 
-* **Peso**, **Altura** and **IMC**: These variables correspond to weight, height and body-mass index. These variables are expected to be important in assessing the likelihood of pathology occurrence, since they are directly linked to physical constitution. Missing values were inputated by performing polynomial regression on existing data. **IMC** for the inputated observations were calculated. A table \@ref from the World Health Organization (WHO) was then used as a reference for BMI distributions per age. Observations with a BMI below 0.8 * [3 *percentile*] or above 1.2 * [97 *percentile*] on their age class were excluded as outliers. 648 observations were thus excluded.
+* **Peso**, **Altura** and **IMC**: These variables correspond to weight, height and body-mass index, respectively. These variables are expected to be important in assessing the likelihood of pathology occurrence, since they are directly linked to physical constitution. Missing values in height and weight were imputed from curves obtained by performing polynomial regression on the 50 percentile data from World Health Organization (WHO) child growth standards [1]. **IMC** was calculated for all the observations. The percentile table was also used to remove outliers, as a reference for BMI distributions per age and gender. Observations with a BMI below 0.8 * [3 *percentile*] or above 1.2 * [97 *percentile*] on their age class and gender were excluded as outliers. 648 observations were thus excluded.
 
 * **SOPRO**: This variable refers to the existence and type of heart murmur. For the purposes of this work, it was encoded to a binary factor corresponding to presence or absence of a murmur on the patient.
 
-* **B2**: This variable correspondes to the secondary heart sound type. An overwhelming percentage of the cases fall in the 'Normal' category. 
+* **B2**: This variable corresponds to the secondary heart sound type. An overwhelming percentage of the cases fall in the 'Normal' category. 
 
-* **FC**: Representing heart rate in beats per minute, this variable is numeric. Values above 230 were excluded as probable errors, considering values above this threshold would be a symptom of extreme exertion. Missing values were inputated with kNN (n = 9), based on distances from the variables **IMC** and **FC**.
+* **FC**: Representing heart rate in beats per minute, this variable is numeric. Values below 40 and above 230 were excluded as probable error. Missing values were inputed with kNN (n = 9), based on distances from the variables **IMC** and **IDADE**.
 
-* **PA_SISTOLICA** and **PA_DIASTOLICA**: Two numeric variables that represent sistolic and diastolic blood pressure. Both variables contain an overwhelming quantity of missing values, but were assumed to be too valuable to be dropped. Therefore, missing values were inputated with kNN (n = 7), based on the distances from the variables **Peso**, **Altura** and **IDADE**. Two outliers were excluded from **PA_SISTOLICA** on account of being over 500, a completely unplausible value.
+* **PA_SISTOLICA** and **PA_DIASTOLICA**: Two numeric variables that represent systolic and diastolic blood pressure. Both variables contain an overwhelming quantity of missing values but were assumed to be too valuable to be dropped. Therefore, missing values were inputed with kNN (n = 7), based on the distances from the variables **Peso**, **Altura** and **IDADE**. Two outliers were excluded from **PA_SISTOLICA** on account of being over 500, a completely unplausible value.
 
-* **HDA**: The information concerning previous history of disease is recorded on two variables, **HDA.1** and **HDA.2**. These variables were merged into a single variable under the assumption that missing values on both fields were assumed to be "lack of previous history", as we expect such information to be explicitely recorded, otherwise.
+* **HDA**: The information concerning previous history of disease is recorded on two variables, **HDA.1** and **HDA.2**. These variables were merged into a single variable under the assumption that missing values on both fields were assumed to be "lack of previous history", as we expect such information to be explicitly recorded, otherwise.
 
 * **MOTIVO**: This variable is the aggregation of 2 variables, **MOTIVO1** and **MOTIVO2**. These variables represent the reason for the clinical evaluation. **MOTIVO1** is divided into 7 broad categories and **MOTIVO2** divides **MOTIVO1** into further subcategories. This results in both variables being extremely correlated, with **MOTIVO2** providing more detail into the motive at the expense of having some levels with very low representation in the dataset. The missing values of **MOTIVO2** were completed with the corresponding entry in **MOTIVO1**.
 
-* **PULSOS** (pulse) had 99.3% observations recorded as 'Normal'. Therefore we do not expect it to carry any significative correlation with our target variable or predictive power in the models we will be exploring. This variable was consequently immediatly dropped.
+* **PULSOS** (pulse) had 99.3% observations recorded as 'Normal'. Therefore, we do not expect it to carry any significative correlation with our target variable or predictive power in the models we will be exploring. This variable was consequently dropped.
 
-Figure \@ref(fig:eda1) shows the histograms/scatterplots of variables that were considered in this work and their interaction with our response variable, **PATOLOGIA**. A cursory analysis of these plots calls into question the ability of variables such as **SEXO**, **HDA** and **PPA** to discriminate the occurrence of pathology. 
+Figure \@ref(fig:eda1) shows the histograms/scatterplots of variables that were considered in this work and their interaction with our response variable, **PATOLOGIA**. A cursory analysis of these plots calls into question the ability of variables such as **SEXO** and **HDA** to discriminate the occurrence of pathology. 
 
-```{r, echo = F, fig.id = "eda1", fig.cap= "", fig.height = 6, message = F, warning =F, fig.width= 6}
+```{r, echo = F, fig.id = "eda1", fig.cap= "Histograms/scatterplots of the variables considered for this analysis and interaction with the response variable 'PATOLOGIA'.", fig.height = 6, message = F, warning =F, fig.width= 8}
 
 # gridExtra::grid.arrange(
 p1<-
@@ -153,20 +154,24 @@ df_temp %>%
   scale_fill_manual(values = c("yellow","orange")) + 
   labs(x = "IDADE") +
   # ylim(c(0,35)) + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        legend.title =  element_blank())
 p2<-
 df_temp %>% 
   ggplot +
   geom_histogram(aes(x = SEXO, fill = PATOLOGIA),stat = 'count', col = 'black') + 
   theme_light() + 
-  scale_fill_manual(values = c("yellow","orange")) 
+  scale_fill_manual(values = c("yellow","orange")) + 
+  theme(legend.position = 'top',
+        legend.title =  element_blank())
 p3<-
 df_temp %>% 
   ggplot +
   geom_histogram(aes(x = SOPRO,fill = PATOLOGIA), stat = 'count', col = 'black') + 
   theme_light() + 
   scale_fill_manual(values = c("yellow","orange")) + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        legend.title =  element_blank())
 p4<-
 df_temp %>% 
   ggplot +
@@ -177,7 +182,8 @@ df_temp %>%
   labs(col = "") + 
   scale_fill_manual(values = c("yellow","orange")) + 
   facet_wrap(PATOLOGIA ~.) + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        legend.title =  element_blank())
 p5<-
 df_temp %>% 
   ggplot +
@@ -185,7 +191,9 @@ df_temp %>%
   theme_light() + 
   scale_fill_manual(values = c("yellow","orange")) + 
   labs(y = "") + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        axis.text.x = element_text(size = 0),
+        legend.title =  element_blank())
 p6<-
 df_temp %>% 
   ggplot +
@@ -193,7 +201,8 @@ df_temp %>%
   theme_light() + 
   scale_fill_manual(values = c("yellow","orange")) + 
   labs(y = "") + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        legend.title =  element_blank())
 p7<-
 df_temp %>% 
   ggplot +
@@ -204,7 +213,8 @@ df_temp %>%
   labs(col = "") + 
   scale_fill_manual(values = c("yellow","orange")) + 
   facet_wrap(PATOLOGIA ~.) + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        legend.title =  element_blank())
 p8<-
 df_temp %>% 
   ggplot +
@@ -212,7 +222,9 @@ df_temp %>%
   theme_light() + 
   scale_fill_manual(values = c("yellow","orange")) + 
   labs(y = "") + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        axis.text.x = element_text(size = 0),
+        legend.title =  element_blank())
 p9<-
 df_temp %>% 
   ggplot +
@@ -220,7 +232,9 @@ df_temp %>%
   theme_light() + 
   scale_fill_manual(values = c("yellow","orange")) + 
   labs(y = "") + 
-  theme(legend.position = 'top')
+  theme(legend.position = 'top',
+        axis.text.x = element_text(size = 0),
+        legend.title =  element_blank())
 # MOTIVO
 
 grid.arrange(p1,p2,p3,
@@ -229,16 +243,46 @@ grid.arrange(p1,p2,p3,
 
 ```
 
-A closer look at the correlation between the variables that were considered for this work (Figure \@ref(fig:corrplot)) confirms that variables **SEXO**, **B2**, **HDA** and **MOTIVO** should not be expected to contribute to a model that attemps to predict the occurrence of pathology. Therefore these variables will not be used.
+A closer look at the chi-square scores between the variables that were considered for this work (Table \@ref(tab:corrplot)) confirms that variables **SEXO**, **B2** and **HDA**  should not be expected to contribute to a model that attempts to predict the occurrence of pathology. Therefore these variables will not be used. In order to confirm this decision, another feature selection method was made (Figure \@ref(fig:fs2)). This method gives us the relevancy of each feature towards the target variable.
 
-```{python, echo = F, message = T, warning = T, fig.id = "corrplot", fig.cap = ""}
-plt.figure(figsize=(40,40))
-#plot heat map
-g=sns.heatmap(dfb[top_corr_features].corr(),annot=True,cmap="RdYlGn")
+```{python, echo = F, message = F, warning = F}
+# plt.figure(figsize=(40,40))
+# #plot heat map
+# g=sns.heatmap(dfb[top_corr_features].corr(),annot=True,cmap="RdYlGn")
+# plt.show()
+df = pd.read_csv('df_final.csv')
+X = df.drop(columns = 'NORMAL X ANORMAL')
+X.drop(columns = 'IMC', inplace=True)
+y = df.loc[:,'NORMAL X ANORMAL']
+X = pd.get_dummies(X)
+bestfeatures = SelectKBest(score_func=chi2, k=10)
+fit = bestfeatures.fit(X,y)
+dfscores = pd.DataFrame(fit.scores_)
+dfcolumns = pd.DataFrame(X.columns)
+#concat two dataframes for better visualization 
+featureScores = pd.concat([dfcolumns,dfscores],axis=1)
+featureScores.columns = ['Specs','Score']  #naming the dataframe columns
+corrtab = featureScores.nlargest(15,'Score')  #print 10 best features
+```
+
+```{r, echo = F, warning = F, tab.id = "corrplot", tab.cap = "chi-scores of the variables considered in this analysis",message = F}
+data.frame(py$corrtab)
+```
+
+```{python, echo = F, message = F, warning = F, fig.id = "fs2", fig.cap="Ranking of the available variables by feature importance"}
+from sklearn.ensemble import ExtraTreesClassifier
+import matplotlib.pyplot as plt
+model = ExtraTreesClassifier()
+model.fit(X,y)
+# print(model.feature_importances_) #use inbuilt class feature_importances of tree based classifiers
+#plot graph of feature importances for better visualization
+feat_importances = pd.Series(model.feature_importances_, index=X.columns)
+feat_importances.nlargest(15).plot(kind='barh')
 plt.show()
 ```
 
-The model that has been tested in this work is $PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + SOPRO + FC + HDA + MOTIVO$. When working with models that can only be applied to numerical variables, the variant $PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + FC$ will be used instead.
+
+The model that has been tested in this work is, therefore, $PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + SOPRO + FC + MOTIVO$. When working with models that can only be applied to numerical variables, the variant $PATOLOGIA \sim Peso + Altura + Idade + PA\_SISTOLICA + PA\_DIASTOLICA + FC$ will be used instead. The dataset was split 80% - 20%, the smaller portion having been reserved for validation of the models.
 
 # Tested Models
 
@@ -248,9 +292,9 @@ The model that has been tested in this work is $PATOLOGIA \sim Peso + Altura + I
 source("R_0040_logistic_regression.R")
 ```
 
-Data was fitted to a sigmoid curve via logistic regression. Accuracy was `r round(ct_rl_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_rl_test$overall["Accuracy"]*100,2)` % for the test dataset, with the cutoff point set at 0.5. **PLOTAR CUTOFF**  
+Data was fitted to a sigmoid curve via logistic regression. Accuracy was `r round(ct_rl_train$overall["Accuracy"],2)` in the training dataset and `r round(ct_rl_test$overall["Accuracy"],2)` for the test dataset, with the cutoff point set at 0.5. If we were to plot the ROC curve, we would obtain Area Under Curve of 0.9405.
 
-```{r ROC, eval = T, echo = F, include = T, fig.cap = "rocplot"}
+```{r ROC, eval = T, echo = F, include = T, fig.cap = "rocplot", eval = F}
 # Regressao Logistica
 p1 <-
   ggplot() + 
@@ -273,9 +317,9 @@ p1 + geom_text(aes(x = 0.5, y = 0.5,
 source("R_0060_LDA.R")
 ```
 
-Linear Discriminant Analysis was performed in the dataset. Accuracy was `r round(ct_lda_train$overall["Accuracy"]*100,2)` % in the training dataset and `r round(ct_lda_test$overall["Accuracy"]*100,2)` % for the test dataset
+Linear Discriminant Analysis was performed in the dataset. Accuracy was `r round(ct_lda_train$overall["Accuracy"],2)` in the training dataset and `r round(ct_lda_test$overall["Accuracy"],2)` for the test dataset. This method was successful in achieving a good separation of classes (\@ref(fig:ldaplot)).
 
-```{r, echo = F}
+```{r, echo = F, warning = F, fig.id = "ldaplot", fig.cap = "Training data after rescaling via the first component."}
 MASS::ldahist(predict(model_lda, data = df_temp[index,])$x[,1],
               g = predict(model_lda, data = df_temp[index,])$class)
 ```
@@ -286,6 +330,52 @@ MASS::ldahist(predict(model_lda, data = df_temp[index,])$x[,1],
 source("R_0070_NBayes.R")
 ```
 
+The implementation of a standard naive Bayes classifier yielded an accuracy of `r signif(ct_nb_train$overall['Accuracy'],2)` on the train data and `r signif(ct_nb_test$overall['Accuracy'],2)` on the test data. 
+
+## Support Vector Machines
+
+```{python, message = F, echo = F, warning = F}
+# from sklearn.tree import DecisionTreeClassifier # Import Decision Tree Classifier
+from sklearn.model_selection import train_test_split # Import train_test_split function
+from sklearn import metrics #Import scikit-learn metrics module for accuracy calculation
+from sklearn.metrics import confusion_matrix
+# from sklearn.ensemble import RandomForestClassifier
+from sklearn import svm
+# from sklearn.naive_bayes import GaussianNB
+from sklearn.model_selection import cross_val_score
+
+# SVM
+df_svm = pd.read_csv('df_final.csv')
+X_svm = df_svm
+y_svm = df_svm.loc[:,'NORMAL X ANORMAL']
+X_svm.drop(columns = ['NORMAL X ANORMAL','SEXO','IMC','HDA','B2'], inplace=True)
+X_svm.drop(columns = ['SOPRO','MOTIVO'], inplace=True)
+# X_svm = pd.get_dummies(X_svm)
+# X_svm = skl.preprocessing.normalize(X_svm)
+
+X_svm_train, X_svm_test, y_svm_train, y_svm_test = train_test_split(X_svm, y_svm, test_size=0.20, random_state=123)
+
+clf = svm.SVC(kernel='poly')
+clf.fit(X_svm_train, y_svm_train)
+scores = cross_val_score(clf, X_svm_train, y_svm_train, cv=10)
+# print("%0.2f accuracy with a standard deviation of %0.2f" % (scores.mean(), scores.std()))
+
+y_svm_pred_train = clf.predict(X_svm_train)
+y_svm_pred = clf.predict(X_svm_test)
+
+# print("Accuracy:",metrics.accuracy_score(y_svm_test, y_svm_pred))
+# print(confusion_matrix(y_svm_test, y_svm_pred))
+```
+
+```{r, echo = F, warning = F, message = F}
+ct_svm_train <- confusionMatrix(
+  factor(py$y_svm_pred_train),
+  factor(py$y_svm_train))
+ct_svm_test <- confusionMatrix(factor(py$y_svm_pred),factor(py$y_svm_test))
+```
+
+After some trials, best performance with the support vector machines was obtained with a polynomial kernel with regularization parameter of $C=1$. Accuracy was `r signif(ct_svm_train$overall['Accuracy'],2)` for the training data set and `r signif(ct_svm_test$overall['Accuracy'],2)` for the test dataset. Normalization of the input variables did not improve model performance.
+
 ## Random Forest
 
 ```{r, echo = F}
@@ -293,16 +383,15 @@ source("R_0070_NBayes.R")
 load("forest.Rdata")
 ```
 
-A Random Forest ensemble analysis was performed with 500 iterations, testing for 3,6,9 and 12 variables from the dataset. Best performance of the model was achieved with 3 variables. Remarkably, the RF ensemble had the exact same performance as the Logistic Regression on the validation set.
+A Random Forest ensemble analysis was performed with 500 iterations, testing for 3, 6, 9 and 12 variables from the dataset. Best performance of the model was achieved with 3 variables, determined by 10-fold cross validation. Accuracy  was `r signif(forest$results$Accuracy[1],2)` on the training set and `r signif(ct_rf_test$overall['Accuracy'],2)` on the test set. Scoring the variables by their *meanGinidecrease* performance (Figure \@ref(fig:rf1)) highlights the importance of the variable **SOPRO**.
 
-```{r, echo = F}
+```{r, echo = F, fig.id = "rf1", fig.cap = "mean Gini index decrease of the variables considered for the Random Forest ensemble"}
 ggplot(data.frame(variables=rownames(forest$finalModel$importance),importance=forest$finalModel$importance))+
   geom_bar(stat="identity",aes(y=variables,x=MeanDecreaseGini))+
   theme_light() + labs(y = "") + 
   theme(axis.text.x = element_text(angle=90),
         axis.text.y = element_text(size = 8))
 ```
-
 ## Recurring Neural Network
 
 ```{r, echo = F, warning = F, message = F, include = F}
@@ -310,12 +399,13 @@ source("R_0090_RNN.R")
 # load("nn.Rdata")
 ```
 
-The dataset was used to train an Artificial Neural Network. Categorical variables were encoded as binary dummy variables (*one-hot encoding*) and continuous variables were centered and scaled into a [0,1] range. The baseline topology that was considered consisted in a single layer perceptron (one hidden layer). The hidden layer consisted of 20 units with a rectified linear (*ReLU*) activation function. A bias term was introduced. The activation function in the output layer was a sigmoid function. The optimizer was 'RMSprop' with learning rate of 0.0001 and the loss function was binary crossentropy. The network was trained for 100 epochs with a batch size of 256 observations. Performance was on par with the previous models
+The dataset was used to train an Artificial Neural Network. Categorical variables were encoded as binary dummy variables (*one-hot encoding*) and continuous variables were centered and scaled into a [0,1] range. The baseline topology that was considered consisted in a single layer perceptron (one hidden layer). The hidden layer consisted of 20 units with a rectified linear (*ReLU*) activation function. A bias term was introduced. The activation function in the output layer was a sigmoid function. The optimizer was 'RMSprop' with learning rate of 0.0001 and the loss function was binary crossentropy. The network was trained for 100 epochs with a batch size of 256 observations. Performance was on par with the previous models, with accuracy on the training data set of 0.93 and 0.96 on the test data set (Figure \@ref(fig:plotnn)).
 
-```{r, echo = F, message = F, warning = F}
+```{r, echo = F, message = F, warning = F, fig.id = "plotnn", fig.cap = "Training history of the Neural Network used to classify the dataset in regards to 'PATOLOGIA'."}
 plot(history) + 
   theme_light() + 
-  theme(legend.position = 'bottom')
+  theme(legend.position = 'bottom') + 
+  labs(y = "")
 ```
 
 ```{r, echo = F, warning=F, message=F}
@@ -327,7 +417,9 @@ confusionMatrix(factor(
 
 # Model comparisons
 
-```{r, echo = F, warning = F, message = F, fig.id = "comp", fig.cap = "", fig.height=4}
+On figure \@ref(fig:comp) we can see the confusion matrices for the predictions of each model for the validation dataset. Performance was very similar across the board, with the notable exception of our implementation of support vector machines, which was lower than all the others. This model was unable to separate correctly observations with pathology. Random forests had the best performance in terms of avoiding false negatives, which in this domain is a decisive metric.
+
+```{r, echo = F, warning = F, message = F, fig.id = "comp", fig.cap = "Confusion matrices for the predictions of each model in the validation data set.", fig.height=4}
 
 table <- ct_rl_test$table %>% data.frame
 ct1 <-
@@ -343,7 +435,6 @@ ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq
   xlim(rev(levels(table$Reference))) + 
   labs(title = "logistic regression") + 
   theme(legend.position = 'none')
-
 
 table <- ct_lda_test$table %>% data.frame
 ct2 <-
@@ -375,6 +466,20 @@ ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq
   labs(title = "Naive Bayes") + 
   theme(legend.position = 'none')
 
+table <- ct_svm_test$table %>% data.frame
+ct6 <-
+table %>%
+  mutate(goodbad = ifelse(table$Prediction == table$Reference, "good", "bad")) %>%
+  group_by(Reference) %>%
+  mutate(prop = Freq/sum(Freq)) %>% 
+ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = Freq), vjust = .5, fontface  = "bold", alpha = 1) +
+  scale_fill_manual(values = c(good = "green", bad = "red")) +
+  theme_bw() +
+  xlim(rev(levels(table$Reference))) + 
+  labs(title = "SVM") + 
+  theme(legend.position = 'none')
 
 table <- ct_rf_test$table %>% data.frame
 ct4 <-
@@ -407,13 +512,13 @@ ggplot(mapping = aes(x = Reference, y = Prediction, fill = goodbad, alpha = Freq
   theme(legend.position = 'none')
 
 
-grid.arrange(ct1,ct2,ct3,
+grid.arrange(ct1,ct2,ct3,ct6,
              ct4,ct5,ncol =2)
 ```
 
-## Performance on the validation set
+Aside from SVM, all models appear to share many observations that they failed to classify correctly (\@ref(fig:plotglobal)). No discernible pattern is observable in the mis-classified observations. It would be interesting in the future to assess possible explanations for this factor.
 
-```{r, echo = F, message = F, warning = F, eval = T}
+```{r, echo = F, message = F, warning = F}
 compara <-
 df_temp[-index,] %>%
     mutate(id = 1:(nrow(df_temp) - length(index)),
@@ -428,12 +533,16 @@ df_temp[-index,] %>%
                             model_lda$prior[1] , "Anormal", "Normal") == response,
            NB = predict(model_bayes, newdata = df_temp[-index,]) == response,
            RF = predict(forest, newdata = df_temp[-index,]) == response,
-           RNN = ifelse(model_nn %>% predict(x_val) > 0.5,"Normal","Anormal") == response) 
+           RNN = ifelse(model_nn %>% predict(x_val) > 0.5,"Normal","Anormal") == response,
+           SVM = factor(py$y_svm_pred)[1:2414] == factor(py$y_svm_test)[1:2414]) 
 
 compara <- 
-compara %>% select(id,Peso,Altura,response,RL,LDA,NB,RF,RNN) %>%
+compara %>% select(id,Peso,Altura,response,RL,LDA,NB,SVM,RF,RNN) %>%
   reshape2::melt(id.vars = c("id","Peso","Altura","response"))
+```
 
+
+```{r, echo = F, message = F, warning = F, eval = T, fig.id = "plotglobal", fig.cap = "Predictions of each model on the Peso ~ Altura scatterplot in the test data set"}
 compara %>% 
  ggplot() + 
  geom_point(aes(x = Peso,
@@ -488,10 +597,17 @@ compara %>%
 ```
 
 # Conclusions
+For the dataset provided, we are happy with the results achieved. All models, with the exception of support vector machines, were able to achieve success rates well above 90%. We are aware however of the possibility of this result being supported on the heavy imputation work that was performed. Considering the results obtained in this analysis, we would opt to proceed with one of the simpler models, such as Logistic Regression. We do not believe that any marginal gains that were achieved with, for example, the artificial neural network justify the more complex implementation cost. The random forests model was by far the most computationally intensive model to implement, but it is remarkable in having the lowest rate of false negatives (cases when a patient with pathology is predicted to be healthy). In a domain such as health care this is a deciding factor and a possible follow-up to this work would have to be focused on this aspect.
 
+Each day, the importance of data analysis and data processing increases. Therefore, the necessity of holding knowledge in this field is even more relevant. Although this project gave us more sensibility to the problem, it also showed the limitations when working with raw data and wrongly imputed data. However, solving this challenge provided us the powerful capabilities of Python and R for the various data science topis addressed. We would like to thank the faculty all the support provided during this project. It proved challenging and several obstacles were detected. However, we were able to overcome them, and the proof is the success of this work.
 
+# Bibliography
 
+[1] WHO, “Child Growth Standards.” https://www.who.int/tools/child-growth-standards/standards (accessed Jan. 15, 2021).
 
+[2] A. Downey, J. Elkner, and C. Meyers, How to Think Like a Computer Scientist: Learning With Python. Wellesley, Massachusetts: Green Tea Press, 2008.
+
+[3] “Towards Data Science.” https://towardsdatascience.com/ (accessed Jan. 16, 2021).
 ```{python, echo = F, message = F, include = T, eval = F}
 m_height_0_36.plot(x='Agemos', y='P50')
 plt.show()
